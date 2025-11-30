@@ -2,18 +2,23 @@ from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
 import sqlite3
 import json
+import logging
 
 DB_PATH = "farmsteam.db"
 
+# Инициализация FastAPI
 app = FastAPI(title="FarmSteam backend")
 
+# Логирование
+logging.basicConfig(level=logging.INFO)
 
+# Функция подключения к базе данных
 def get_conn():
     conn = sqlite3.connect(DB_PATH)
     conn.row_factory = sqlite3.Row
     return conn
 
-
+# Инициализация базы данных
 def init_db():
     conn = get_conn()
     cur = conn.cursor()
@@ -35,17 +40,16 @@ def init_db():
     conn.commit()
     conn.close()
 
-
+# Pydantic модели для валидации данных
 class StateIn(BaseModel):
     user_id: str
     state: dict
-
 
 class ReferralIn(BaseModel):
     referrer_id: str
     friend_id: str
 
-
+# Значения по умолчанию для состояния пользователя
 DEFAULT_STATE = {
     "coins": 0,
     "clickLevel": 1,
@@ -67,12 +71,11 @@ DEFAULT_STATE = {
     "steam_rub": 0,
 }
 
-
 @app.on_event("startup")
 def on_startup():
     init_db()
 
-
+# Обработка GET-запроса для получения состояния пользователя
 @app.get("/state/{user_id}")
 def get_state(user_id: str):
     conn = get_conn()
@@ -80,38 +83,48 @@ def get_state(user_id: str):
 
     cur.execute("SELECT state_json FROM user_state WHERE user_id = ?", (user_id,))
     row = cur.fetchone()
-
     conn.close()
 
     if not row:
+        logging.info(f"Данных для пользователя {user_id} нет, возвращаем значения по умолчанию.")
         return DEFAULT_STATE
 
     try:
         saved = json.loads(row["state_json"])
         merged = DEFAULT_STATE.copy()
         merged.update(saved)
+        logging.info(f"Данные для пользователя {user_id} успешно загружены.")
         return merged
-    except Exception:
+    except Exception as e:
+        logging.error(f"Ошибка при загрузке данных для пользователя {user_id}: {e}")
         return DEFAULT_STATE
 
-
+# Обработка POST-запроса для сохранения состояния пользователя
 @app.post("/state")
 def save_state(payload: StateIn):
     conn = get_conn()
     cur = conn.cursor()
 
-    cur.execute(
-        "INSERT INTO user_state (user_id, state_json) VALUES (?, ?) "
-        "ON CONFLICT(user_id) DO UPDATE SET state_json = excluded.state_json",
-        (payload.user_id, json.dumps(payload.state)),
-    )
+    # Логируем входящие данные
+    logging.info(f"Получены данные для сохранения пользователя {payload.user_id}: {payload.state}")
 
-    conn.commit()
+    try:
+        cur.execute(
+            "INSERT INTO user_state (user_id, state_json) VALUES (?, ?) "
+            "ON CONFLICT(user_id) DO UPDATE SET state_json = excluded.state_json",
+            (payload.user_id, json.dumps(payload.state)),
+        )
+        conn.commit()
+        logging.info(f"Данные для пользователя {payload.user_id} успешно сохранены.")
+    except Exception as e:
+        logging.error(f"Ошибка при сохранении данных для пользователя {payload.user_id}: {e}")
+        conn.close()
+        raise HTTPException(status_code=500, detail="Ошибка при сохранении данных")
+
     conn.close()
-
     return {"ok": True}
 
-
+# Обработка POST-запроса для регистрации реферальной ссылки
 @app.post("/referral/register")
 def register_referral(data: ReferralIn):
     if data.referrer_id == data.friend_id:
@@ -120,21 +133,21 @@ def register_referral(data: ReferralIn):
     conn = get_conn()
     cur = conn.cursor()
 
-    # уже был учтён такой друг
+    # Проверяем, был ли уже учтен такой друг
     cur.execute("SELECT 1 FROM referrals WHERE friend_id = ?", (data.friend_id,))
     if cur.fetchone():
         conn.close()
         return {"ok": True, "already": True}
 
-    # записываем пару
+    # Записываем пару
     cur.execute(
         "INSERT INTO referrals (friend_id, referrer_id) VALUES (?, ?)",
         (data.friend_id, data.referrer_id),
     )
 
-    bonus = 10_000
+    bonus = 10_000  # Бонус за реферала
 
-    # начисляем бонус рефереру и другу
+    # Начисляем бонус как рефереру, так и другу
     for uid in (data.referrer_id, data.friend_id):
         cur.execute("SELECT state_json FROM user_state WHERE user_id = ?", (uid,))
         row = cur.fetchone()
