@@ -1,4 +1,5 @@
 from fastapi import FastAPI, HTTPException
+from fastapi.middleware.cors import CORSMiddleware  # Импортируем CORS middleware
 from pydantic import BaseModel
 import sqlite3
 import json
@@ -9,6 +10,20 @@ DB_PATH = "farmsteam.db"
 
 # Инициализация FastAPI
 app = FastAPI(title="FarmSteam backend")
+
+# Добавляем CORS middleware
+origins = [
+    "https://lasuet.github.io",  # Разрешаем только твой домен (замени, если надо)
+    "https://farmsteam-backend.onrender.com",  # Твой сервер на Render
+]
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=origins,  # Разрешаем доступ с этих доменов
+    allow_credentials=True,
+    allow_methods=["*"],  # Разрешаем все методы, включая OPTIONS
+    allow_headers=["*"],  # Разрешаем все заголовки
+)
 
 # Логирование
 logging.basicConfig(level=logging.INFO)
