@@ -4,6 +4,7 @@ import sqlite3
 import json
 import logging
 
+# Путь к базе данных SQLite
 DB_PATH = "farmsteam.db"
 
 # Инициализация FastAPI
@@ -23,6 +24,7 @@ def init_db():
     conn = get_conn()
     cur = conn.cursor()
 
+    # Создание таблиц, если они не существуют
     cur.execute("""
     CREATE TABLE IF NOT EXISTS user_state (
         user_id TEXT PRIMARY KEY,
@@ -81,15 +83,18 @@ def get_state(user_id: str):
     conn = get_conn()
     cur = conn.cursor()
 
+    # Запрос на получение состояния пользователя из базы данных
     cur.execute("SELECT state_json FROM user_state WHERE user_id = ?", (user_id,))
     row = cur.fetchone()
     conn.close()
 
+    # Если пользователь не найден, возвращаем значения по умолчанию
     if not row:
         logging.info(f"Данных для пользователя {user_id} нет, возвращаем значения по умолчанию.")
         return DEFAULT_STATE
 
     try:
+        # Загружаем сохраненные данные и объединяем с данными по умолчанию
         saved = json.loads(row["state_json"])
         merged = DEFAULT_STATE.copy()
         merged.update(saved)
@@ -109,6 +114,7 @@ def save_state(payload: StateIn):
     logging.info(f"Получены данные для сохранения пользователя {payload.user_id}: {payload.state}")
 
     try:
+        # Пытаемся сохранить или обновить данные в базе
         cur.execute(
             "INSERT INTO user_state (user_id, state_json) VALUES (?, ?) "
             "ON CONFLICT(user_id) DO UPDATE SET state_json = excluded.state_json",
@@ -116,7 +122,13 @@ def save_state(payload: StateIn):
         )
         conn.commit()
         logging.info(f"Данные для пользователя {payload.user_id} успешно сохранены.")
+    except sqlite3.Error as e:
+        # Логируем ошибку с деталями
+        logging.error(f"SQLite ошибка при сохранении данных для пользователя {payload.user_id}: {e}")
+        conn.close()
+        raise HTTPException(status_code=500, detail="Ошибка при сохранении данных")
     except Exception as e:
+        # Логируем все другие ошибки
         logging.error(f"Ошибка при сохранении данных для пользователя {payload.user_id}: {e}")
         conn.close()
         raise HTTPException(status_code=500, detail="Ошибка при сохранении данных")
